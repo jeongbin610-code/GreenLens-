@@ -244,6 +244,25 @@ def _first_text(record: dict, keys: tuple[str, ...]) -> str:
     return ""
 
 
+# claim_type_master는 Claim 유형마다 '무엇으로 확인하는지'를 이미 적어 두고 있다.
+# Policy 기준이 비었을 때 '없다'고만 하면 결함처럼 보이므로, 실제 확인 경로를 보여준다.
+COVERAGE_NOTE = {
+    "연결": "이 유형은 등록된 기준에 연결되어 있습니다.",
+    "부분": "일부 제품군에만 기준이 연결되어 있습니다.",
+    "미연결": "이 유형에 대응하는 수치 기준이 환경표지 고시에 아직 없습니다.",
+}
+
+
+def claim_type_route(claim_type: str) -> dict:
+    """이 Claim 유형을 무엇으로 확인하는지 반환한다."""
+    try:
+        df = gl.claim_type_master.fillna("")
+        hit = df[df["claim_label"] == str(claim_type).strip()]
+        return hit.iloc[0].to_dict() if len(hit) else {}
+    except Exception:
+        return {}
+
+
 def policy_original_text(ref: dict) -> str:
     """Policy 검색 결과 또는 criteria_master에서 원문 조항을 찾는다."""
     text = _first_text(ref, (
@@ -999,7 +1018,22 @@ def render_claim(idx: int, rec: dict) -> None:
                 st.caption("신뢰등급이 VERIFIED가 아닌 기준은 단독 판정 근거로 쓰지 않습니다. "
                            "표의 값은 기준표에서 옮긴 것이며, 고시 원문 전문을 색인하지는 않습니다.")
             else:
-                st.caption("이 Claim에 연결된 Policy 기준이 없습니다.")
+                route = claim_type_route(claim.get("claim_type", ""))
+                way = str(route.get("verification_route", "")).strip()
+                cover = str(route.get("current_policy_coverage", "")).strip()
+                if way:
+                    st.info(f"이 Claim은 **{way}** 방식으로 확인합니다. "
+                            "수치 기준과 대조하는 유형이 아니라 Policy 기준이 비어 있는 것이며, "
+                            "판정이 근거 없이 내려진 것은 아닙니다.", icon="🧭")
+                    if cover:
+                        st.caption(f"기준 연결 상태 — {cover}. "
+                                   + COVERAGE_NOTE.get(cover, ""))
+                    st.caption("실제로 무엇과 대조했는지는 ‘확인한 자료’ 탭에서 볼 수 있습니다.")
+                else:
+                    st.caption("이 Claim에 연결된 Policy 기준이 없습니다.")
+                if not gl.policy_retriever:
+                    st.caption("Policy RAG가 꺼져 있어 고시 원문 검색은 시도하지 않았습니다 "
+                               "(현재는 등록된 기준표만 직접 조회합니다).")
         with tabs[1]:
             evs = report.get("evidence", [])
             if evs:
