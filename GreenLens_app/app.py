@@ -326,12 +326,15 @@ with st.sidebar:
     )
 
     st.markdown("**AI 구성**")
-    st.caption(
-        f"- 판정: 규칙 비교 {len(gl.RULES)}종 (LLM이 판정을 바꾸지 않음)\n"
-        f"- Claim 추출: 규칙 패턴 {len(gl.CLAIM_PATTERNS)}종\n"
-        f"- LLM 보조: {'사용' if gl.USE_LLM else '미사용'}\n"
-        f"- Policy RAG: {'사용' if gl.policy_retriever else '미사용(기준 직접 조회)'}"
-    )
+    lines = [
+        f"- 판정: 규칙 비교 {len(gl.RULES)}종 (LLM이 판정을 바꾸지 않음)",
+        f"- Claim 추출: 규칙 패턴 {len(gl.CLAIM_PATTERNS)}종",
+        f"- LLM 보조: {'사용' if gl.USE_LLM else '미사용'}",
+        "- 증빙 구조화: 규칙 파서"
+        + ("+LLM(원문 대조 게이트 통과분만)" if gl.USE_LLM else " 전용"),
+        f"- Policy RAG: {'사용' if gl.policy_retriever else '미사용(기준 직접 조회)'}",
+    ]
+    st.caption(("  " + chr(10)).join(lines))
 
     with st.expander("개인정보 · 입력 안내"):
         st.caption(
@@ -612,6 +615,11 @@ def evidence_form(key: str, product_ids: list[str]) -> list[dict]:
         cert_no = c5.text_input("인증번호", key=f"{key}-cert", placeholder="29431")
         valid_to = c6.text_input("유효기간 종료일", key=f"{key}-to", placeholder="2028-08-17")
         content = st.text_area("내용 / 원문 발췌", key=f"{key}-content", height=80)
+        # 인증번호가 있는 자료는 인증 확인 경로로 가고 수치 대조 후보에서 빠진다.
+        # 화면에서 이유를 모른 채 '자료 요청'에 머무는 일이 없도록 입력 시점에 알린다.
+        if cert_no and value:
+            st.info("인증번호가 있는 자료는 인증 확인 경로로 처리되어 수치 대조에서는 제외됩니다. "
+                    "수치를 대조하려면 인증번호를 비우고 제출하세요.", icon="🔀")
         if st.button("이 자료 사용", key=f"{key}-manual-go"):
             if not any([ev_type, value, scope, cert_no, content]):
                 st.warning("최소한 자료 유형이나 수치 중 하나는 입력해 주세요.")
@@ -641,11 +649,26 @@ def evidence_form(key: str, product_ids: list[str]) -> list[dict]:
             if text:
                 st.text_area("추출된 텍스트", text[:2000], height=120, disabled=True,
                              key=f"{key}-preview")
-                st.caption(
-                    "수치·적용 범위는 " +
-                    ("LLM이 구조화합니다." if gl.parse_evidence_text else
-                     "자동으로 구조화되지 않습니다(LLM 미사용). 규칙 대조가 필요하면 '직접 입력'을 쓰세요.")
-                )
+                # 규칙 파서가 먼저 읽고, LLM은 빈 칸만 채운다(원문에 없는 값은 버림).
+                # 무엇이 어떻게 읽혔는지 제출 전에 보여준다 — 잘못 읽히면 직접 입력으로 고친다.
+                preview = gl.parse_evidence_text(text, target)
+                got = {k: preview[k] for k in
+                       ("evidence_type", "value", "unit", "scope", "cert_no", "valid_to")
+                       if str(preview[k]).strip()}
+                if got:
+                    st.caption("읽어낸 항목 — " + " · ".join(
+                        f"{k} `{v}`" for k, v in got.items()))
+                    src = preview.get("field_sources", {})
+                    if "LLM" in src.values():
+                        st.caption("LLM이 채운 칸: "
+                                   + ", ".join(k for k, v in src.items() if v == "LLM")
+                                   + " (원문에 있는 값만 통과시킵니다)")
+                else:
+                    st.warning("이 문서에서 수치·적용 범위를 읽어내지 못했습니다. "
+                               "'직접 입력' 탭에 항목을 옮겨 적어 주세요.", icon="✍️")
+                if preview.get("dropped_fields"):
+                    st.caption("원문에서 확인되지 않아 버린 값: "
+                               + ", ".join(preview["dropped_fields"]))
                 if st.button("이 자료 사용", key=f"{key}-file-go"):
                     records.append({"__text__": text, "product_id": target})
 
