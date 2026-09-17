@@ -230,9 +230,136 @@ def source_badge(is_synthetic, source_type: str = "") -> str:
     """공개·제출·합성 자료를 구분해 표시한다."""
     if str(is_synthetic) == "True" or "합성" in str(source_type):
         return "가상(합성) 자료"
-    if "제출" in str(source_type):
+    if "제출" in str(source_type) or "SESSION" in str(source_type):
         return "입점사 제출 자료"
     return "공식/공개 기록"
+
+
+def _first_text(record: dict, keys: tuple[str, ...]) -> str:
+    """여러 데이터 스키마에서 원문 후보를 안전하게 찾는다."""
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def policy_original_text(ref: dict) -> str:
+    """Policy 검색 결과 또는 criteria_master에서 원문 조항을 찾는다."""
+    text = _first_text(ref, (
+        "original_text", "policy_text", "raw_text", "clause_text",
+        "source_text", "content", "text", "excerpt", "quote",
+    ))
+    if text:
+        return text
+
+    criterion_id = str(ref.get("criterion_id", "")).strip()
+    if criterion_id and hasattr(gl, "criteria_master"):
+        try:
+            df = gl.criteria_master
+            if "criterion_id" in df.columns:
+                rows = df[df["criterion_id"].astype(str) == criterion_id]
+                if not rows.empty:
+                    row = rows.iloc[0].to_dict()
+                    return _first_text(row, (
+                        "원문", "기준원문", "조항원문", "original_text",
+                        "policy_text", "raw_text", "content", "text", "기준내용",
+                    ))
+        except Exception:
+            pass
+    return ""
+
+
+def company_db_original_text(ev: dict) -> str:
+    """대조된 Evidence의 Company DB 원문을 찾는다."""
+    text = _first_text(ev, (
+        "original_text", "raw_text", "source_text", "content",
+        "text", "excerpt", "document_text",
+    ))
+    if text:
+        return text
+
+    evidence_id = str(ev.get("evidence_id", "")).strip()
+    if evidence_id and hasattr(gl, "public_evidence"):
+        try:
+            df = gl.public_evidence
+            if "evidence_id" in df.columns:
+                rows = df[df["evidence_id"].astype(str) == evidence_id]
+                if not rows.empty:
+                    row = rows.iloc[0].to_dict()
+                    return _first_text(row, (
+                        "원문", "original_text", "raw_text", "source_text",
+                        "content", "text", "excerpt", "document_text",
+                    ))
+        except Exception:
+            pass
+    return ""
+
+
+def suggested_evidence_document(item: str) -> str:
+    """화면에 체크리스트를 노출하지 않고 부족 항목에 맞는 증빙 종류를 안내한다."""
+    t = str(item)
+    rules = [
+        (("인증번호", "인증", "유효기간"), "인증서 또는 인증기관 조회 결과"),
+        (("재생", "재활용", "함량", "원료"), "원료성적서, 공급업체 확인서 또는 함량 시험성적서"),
+        (("범위", "부위", "제품 전체", "적용"), "제품 구성표(BOM), 재질 구성표 또는 적용 범위가 적힌 확인서"),
+        (("탄소", "배출", "온실가스", "LCA"), "탄소발자국 산정서, LCA 보고서 또는 제3자 검증자료"),
+        (("에너지", "전력"), "에너지 사용량 시험성적서 또는 측정 결과"),
+        (("생분해", "분해"), "생분해성 시험성적서"),
+        (("유해", "성분", "물질"), "성분표 또는 공인 시험기관 시험성적서"),
+        (("비교", "감소", "절감", "기존"), "비교 대상·기준시점·측정방법이 포함된 비교 산정자료"),
+    ]
+    for keywords, doc in rules:
+        if any(k in t for k in keywords):
+            return doc
+    return "해당 사실을 직접 확인할 수 있는 시험성적서, 인증서 또는 공급업체 확인서"
+
+
+def evidence_request_messages(missing_items: list[str]) -> list[str]:
+    """숨은 검사 기준을 사용자 친화적인 증빙 요청 문장으로 변환한다."""
+    out = []
+    for item in missing_items:
+        label = str(item).strip() or "필요 근거"
+        out.append(
+            f"Company DB에서 '{label}'을 확인할 수 없습니다. "
+            f"{suggested_evidence_document(label)}로 확인할 수 있도록 PDF 또는 TXT 증빙을 제출해 주세요."
+        )
+    return out
+
+
+def render_claim_extraction_process(ex: dict) -> None:
+    """검토 후에도 Claim 추출 과정을 다시 볼 수 있게 표시한다."""
+    with st.expander("Claim 추출 과정 보기", expanded=True):
+        st.caption("광고 원문에서 검증 가능한 환경성 주장만 분리하고, 원문에 없는 내용은 추정해 만들지 않습니다.")
+        st.markdown("**광고 원문**")
+        st.code(ss.ad_text, language=None)
+        claims = ex.get("claims", [])
+        if not claims:
+            st.warning("검증 가능한 Claim을 추출하지 못했습니다.")
+            return
+        for i, claim in enumerate(claims, 1):
+            st.markdown(f"**{i}. {claim.get('claim_id', f'Claim {i}')}**")
+            span = claim.get("span") or [0, 0]
+            if isinstance(span, (list, tuple)) and len(span) == 2 and span != [0, 0]:
+                st.markdown(
+                    "<div style='background:#fff7ed;border-left:3px solid #f59e0b;padding:8px 12px'>"
+                    + highlight(ss.ad_text, list(span)) + "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.code(claim.get("claim_text", ""), language=None)
+            meta = {
+                "추출 문구": claim.get("claim_text", ""),
+                "검사 규칙": claim.get("validation_rule_id", "") or "담당자 검토 필요",
+                "기준 ID": claim.get("criterion_id", "") or "미지정",
+                "주장 값": f"{claim.get('claim_value','')}{claim.get('claim_unit','')}",
+                "적용 범위": claim.get("claim_scope", "") or "미명시",
+                "추출 신뢰도": claim.get("confidence", ""),
+            }
+            st.dataframe(pd.DataFrame([meta]), hide_index=True, width="stretch")
+        rejected = ex.get("rejected", [])
+        if rejected:
+            st.caption(f"원문 불일치 등으로 Claim 생성에서 제외된 후보 {len(rejected)}건")
 
 
 # 판정이 무엇과 무엇을 대조한 결과인지 값 대 값으로 보여준다.
@@ -576,12 +703,10 @@ def screen_input() -> None:
         ss.intake_evidence = []
         st.info("입력이 변경되어 이전 검토 결과를 초기화했습니다.", icon="🔄")
 
-    with st.expander("이번 검토에 참고할 증빙 첨부 (선택)"):
-        st.caption("제출 자료는 이번 검토에만 반영되며 Company DB에 저장되지 않습니다.")
-        intake = evidence_form("intake", ss.product_ids)
-        if intake:
-            ss.intake_evidence = intake
-            st.success(f"{len(intake)}건을 이번 검토에 사용합니다.")
+    st.caption(
+        "추가 증빙은 1차 검토에서 근거 부족이 확인된 경우에만 요청합니다. "
+        "요청된 자료는 PDF/TXT 형식으로 제출할 수 있습니다."
+    )
 
     st.write("")
     ready = bool(ss.ad_text.strip()) and bool(ss.product_ids)
@@ -608,7 +733,12 @@ def read_pdf_text(file) -> tuple[str, bool]:
 
 
 def evidence_form(key: str, product_ids: list[str]) -> list[dict]:
-    """자료 제출 입력. 반환: Evidence 레코드 목록 (없으면 빈 목록)."""
+    """추가 증빙 제출.
+
+    PDF·TXT 업로드가 기본 경로다. 규칙 파서가 원문에서 수치·범위·유효기간을
+    읽어내고, 읽히지 않는 문서(스캔본 등)는 직접 입력으로 받는다.
+    어느 경로든 Company DB에는 쓰지 않는다 — 이번 검토에만 쓰인다.
+    """
     if not product_ids:
         st.caption("먼저 제품을 선택하세요.")
         return []
@@ -617,7 +747,58 @@ def evidence_form(key: str, product_ids: list[str]) -> list[dict]:
     target = (product_ids[0] if len(product_ids) == 1 else
               st.selectbox("자료가 해당하는 제품", product_ids, key=f"{key}-target"))
 
-    tab_manual, tab_file, tab_sample = st.tabs(["직접 입력", "파일 첨부", "시연용 샘플"])
+    tab_file, tab_manual, tab_sample = st.tabs(
+        ["PDF · TXT 업로드", "직접 입력", "시연용 샘플"])
+
+    with tab_file:
+        st.caption("업로드한 자료는 이번 검토에만 사용하며 Company DB에 자동 저장하지 않습니다.")
+        up = st.file_uploader(
+            "증빙 자료 업로드", type=["pdf", "txt"], key=f"{key}-file",
+            help="예: 인증서, 시험성적서, 원료성적서, 공급업체 확인서, LCA 보고서")
+        text = ""
+        if up is not None:
+            if up.name.lower().endswith(".pdf"):
+                text, is_image = read_pdf_text(up)
+                if is_image:
+                    st.warning(
+                        "텍스트를 추출하지 못했습니다. 이미지로만 된 PDF로 보입니다. "
+                        "'직접 입력' 탭에 항목을 옮겨 적어 주세요. (OCR은 후속 과제입니다)",
+                        icon="🖼️")
+                    text = ""
+            else:
+                text = up.read().decode("utf-8", errors="replace")
+            if up is not None and not text.strip() and not up.name.lower().endswith(".pdf"):
+                st.error("파일에서 검토할 텍스트를 찾지 못했습니다.")
+
+        if text:
+            st.markdown("**제출 자료에서 추출한 원문**")
+            st.text_area("추출 원문", text[:5000], height=180, disabled=True,
+                         key=f"{key}-preview", label_visibility="collapsed")
+            # 규칙 파서가 먼저 읽고, LLM은 빈 칸만 채운다(원문에 없는 값은 버림).
+            # 무엇이 어떻게 읽혔는지 제출 전에 보여준다 — 잘못 읽히면 직접 입력으로 고친다.
+            preview = gl.parse_evidence_text(text, target)
+            got = {k: preview[k] for k in
+                   ("evidence_type", "value", "unit", "scope", "cert_no", "valid_to")
+                   if str(preview[k]).strip()}
+            if got:
+                st.caption("읽어낸 항목 — "
+                           + " · ".join(f"{k} `{v}`" for k, v in got.items()))
+                src = preview.get("field_sources", {})
+                if "LLM" in src.values():
+                    st.caption("LLM이 채운 칸: "
+                               + ", ".join(k for k, v in src.items() if v == "LLM")
+                               + " (원문에 있는 값만 통과시킵니다)")
+            else:
+                st.warning("이 문서에서 수치·적용 범위를 읽어내지 못했습니다. "
+                           "'직접 입력' 탭에 항목을 옮겨 적어 주세요.", icon="✍️")
+            if preview.get("dropped_fields"):
+                st.caption("원문에서 확인되지 않아 버린 값: "
+                           + ", ".join(preview["dropped_fields"]))
+            if st.button("이 PDF/TXT로 재검토", key=f"{key}-file-go", type="primary"):
+                records.append({
+                    "__text__": text, "product_id": target, "file_name": up.name,
+                    "file_type": "PDF" if up.name.lower().endswith(".pdf") else "TXT",
+                })
 
     with tab_manual:
         st.caption("인증서·성적서의 항목을 그대로 옮겨 적으세요. 없는 값은 비워 두면 됩니다.")
@@ -628,7 +809,7 @@ def evidence_form(key: str, product_ids: list[str]) -> list[dict]:
         unit = c3.text_input("단위", key=f"{key}-unit", placeholder="%")
         c4, c5, c6 = st.columns(3)
         scope = c4.text_input("적용 부위·범위", key=f"{key}-scope", placeholder="용기 본체")
-        cert_no = c5.text_input("인증번호", key=f"{key}-cert", placeholder="29431")
+        cert_no = c5.text_input("인증번호", key=f"{key}-cert")
         valid_to = c6.text_input("유효기간 종료일", key=f"{key}-to", placeholder="2028-08-17")
         content = st.text_area("내용 / 원문 발췌", key=f"{key}-content", height=80)
         # 인증번호가 있는 자료는 인증 확인 경로로 가고 수치 대조 후보에서 빠진다.
@@ -648,55 +829,17 @@ def evidence_form(key: str, product_ids: list[str]) -> list[dict]:
                     "is_synthetic": "True", "origin": "SESSION",
                 })
 
-    with tab_file:
-        up = st.file_uploader("PDF 또는 TXT", type=["pdf", "txt"], key=f"{key}-file")
-        if up is not None:
-            if up.name.lower().endswith(".pdf"):
-                text, is_image = read_pdf_text(up)
-                if is_image:
-                    st.warning(
-                        "텍스트를 추출하지 못했습니다. 이미지로만 된 PDF로 보입니다. "
-                        "'직접 입력' 탭에 항목을 옮겨 적어 주세요. (OCR은 후속 과제입니다)",
-                        icon="🖼️",
-                    )
-                    text = ""
-            else:
-                text = up.read().decode("utf-8", errors="replace")
-            if text:
-                st.text_area("추출된 텍스트", text[:2000], height=120, disabled=True,
-                             key=f"{key}-preview")
-                # 규칙 파서가 먼저 읽고, LLM은 빈 칸만 채운다(원문에 없는 값은 버림).
-                # 무엇이 어떻게 읽혔는지 제출 전에 보여준다 — 잘못 읽히면 직접 입력으로 고친다.
-                preview = gl.parse_evidence_text(text, target)
-                got = {k: preview[k] for k in
-                       ("evidence_type", "value", "unit", "scope", "cert_no", "valid_to")
-                       if str(preview[k]).strip()}
-                if got:
-                    st.caption("읽어낸 항목 — " + " · ".join(
-                        f"{k} `{v}`" for k, v in got.items()))
-                    src = preview.get("field_sources", {})
-                    if "LLM" in src.values():
-                        st.caption("LLM이 채운 칸: "
-                                   + ", ".join(k for k, v in src.items() if v == "LLM")
-                                   + " (원문에 있는 값만 통과시킵니다)")
-                else:
-                    st.warning("이 문서에서 수치·적용 범위를 읽어내지 못했습니다. "
-                               "'직접 입력' 탭에 항목을 옮겨 적어 주세요.", icon="✍️")
-                if preview.get("dropped_fields"):
-                    st.caption("원문에서 확인되지 않아 버린 값: "
-                               + ", ".join(preview["dropped_fields"]))
-                if st.button("이 자료 사용", key=f"{key}-file-go"):
-                    records.append({"__text__": text, "product_id": target})
-
     with tab_sample:
-        pool = [e for e in gl.SESSION_EVIDENCE_POOL.values() if e["product_id"] == target]
+        pool = [e for e in gl.SESSION_EVIDENCE_POOL.values()
+                if e["product_id"] == target]
         if not pool:
             st.caption("이 제품에는 준비된 시연용 자료가 없습니다.")
         for e in pool:
             st.markdown(
                 f"**{e['evidence_id']}** · {e.get('evidence_type','')} · "
                 f"{e.get('value','')}{e.get('unit','')} · 적용 범위 `{e.get('scope','')}` "
-                + pill(source_badge(e.get("is_synthetic"), e.get("origin", "")), "#7c2d12", "#fff7ed"),
+                + pill(source_badge(e.get("is_synthetic"), e.get("origin", "")),
+                       "#7c2d12", "#fff7ed"),
                 unsafe_allow_html=True,
             )
             if st.button("이 자료 제출", key=f"{key}-sample-{e['evidence_id']}"):
@@ -718,6 +861,11 @@ def run_review() -> None:
         ex = gl.extract_claims(ss.ad_text, ss.product_ids)
         st.write(f"　→ Claim {len(ex['claims'])}건 추출"
                  + (f", {len(ex['rejected'])}건은 원문에 없어 기각" if ex["rejected"] else ""))
+        for n, extracted in enumerate(ex["claims"], 1):
+            st.write(
+                f"　　{n}) {extracted.get('claim_text','')} "
+                f"→ 규칙 {extracted.get('validation_rule_id') or '담당자 검토'}"
+            )
 
         results = []
         bar = st.progress(0.0)
@@ -767,11 +915,13 @@ def render_claim(idx: int, rec: dict) -> None:
     st.write("")
 
     # 검토 결과와 담당자 확인 상태를 분리 표시 (기획서 F-5)
-    st.markdown(
+    status_line = (
         "검토 결과 " + pill(label_of(rec), fg, bg)
-        + " &nbsp;&nbsp; 확인 상태 " + pill(review_state_of(rec), "#4e5968", "#f2f4f6"),
-        unsafe_allow_html=True,
+        + " &nbsp;&nbsp; 확인 상태 " + pill(review_state_of(rec), "#4e5968", "#f2f4f6")
     )
+    if state["needs_human"] or status in {"PARTIALLY_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"}:
+        status_line += " &nbsp;&nbsp; " + pill("재검토 필요", "#b91c1c", "#fef2f2")
+    st.markdown(status_line, unsafe_allow_html=True)
     st.caption(STATUS_NOTE[status])
 
     body = state["request"] if state["needs_human"] else state["report"]
@@ -810,7 +960,7 @@ def render_claim(idx: int, rec: dict) -> None:
             refs = report.get("policy_refs", [])
             if refs:
                 # criteria_master에는 기준값·시행일·버전·출처 URL까지 들어 있다.
-                # 어느 문서 몇 페이지의 어떤 수치와 대조했는지 추적할 수 있도록 전부 보여준다.
+                # 어느 문서 몇 페이지의 어떤 수치와 대조했는지 추적할 수 있게 전부 보여준다.
                 enriched = []
                 for r in refs:
                     c = gl.get_criterion(r.get("criterion_id", "")) or {}
@@ -826,11 +976,21 @@ def render_claim(idx: int, rec: dict) -> None:
                         "신뢰등급": r.get("trust", ""),
                     })
                 st.dataframe(pd.DataFrame(enriched), hide_index=True, width="stretch")
-                for r in refs:
-                    c = gl.get_criterion(r.get("criterion_id", "")) or {}
+
+                st.markdown("**Policy 원문**")
+                for n, ref in enumerate(refs, 1):
+                    c = gl.get_criterion(ref.get("criterion_id", "")) or {}
+                    raw = policy_original_text(ref)
+                    title = ref.get("doc") or ref.get("criterion_id") or f"Policy {n}"
+                    st.caption(f"{n}. {title} · {ref.get('page','조항 미기재')}")
+                    if raw:
+                        st.code(raw, language=None)
+                    else:
+                        st.info("이 기준에는 고시 원문 문장이 아직 연결되어 있지 않습니다. "
+                                "아래 출처에서 해당 조항을 확인할 수 있습니다.", icon="🔗")
                     url = str(c.get("기준출처URL", "")).strip()
                     if url.startswith("http"):
-                        st.caption(f"{r.get('criterion_id','')} 원문 출처 · [{c.get('기준문서명','')}]({url})")
+                        st.caption(f"　출처 · [{c.get('기준문서명','')}]({url})")
                     if str(c.get("기준검증상태", "")).strip():
                         st.caption(f"　검증 상태 — {c['기준검증상태']}")
                 st.caption("신뢰등급이 VERIFIED가 아닌 기준은 단독 판정 근거로 쓰지 않습니다. "
@@ -850,6 +1010,23 @@ def render_claim(idx: int, rec: dict) -> None:
                         "cert_no": "인증번호", "value": "값", "unit": "단위",
                         "scope": "적용 범위", "valid_to": "유효기간 종료"}),
                     hide_index=True, width="stretch")
+                st.markdown("**근거 원문**")
+                for n, ev in enumerate(evs, 1):
+                    raw = company_db_original_text(ev)
+                    ev_id = ev.get("evidence_id", f"Evidence {n}")
+                    origin = str(ev.get("origin", ev.get("source_type", "")))
+                    is_session = origin.upper().startswith("SESSION") or "제출" in origin
+                    source_label = "제출 증빙 원문" if is_session else "Company DB 원문"
+                    st.caption(
+                        f"{n}. {source_label} · {ev_id} · "
+                        f"{ev.get('evidence_type','자료 유형 미기재')}"
+                    )
+                    if raw:
+                        st.code(raw, language=None)
+                    elif is_session:
+                        st.info("이번 검토에서 제출된 임시 증빙입니다. 원문 필드가 구조화 결과에 포함되지 않았습니다.")
+                    else:
+                        st.info("해당 Company DB Evidence에 원문 필드가 없습니다. 원문 컬럼을 연결하면 여기에 그대로 표시됩니다.")
                 if (df["is_synthetic"].astype(str) == "True").any():
                     st.caption("⚠ 가상(합성) 자료가 포함되어 있습니다. "
                                "실제 제품의 측정값이나 환경성을 보증하지 않습니다.")
@@ -906,14 +1083,23 @@ def render_claim(idx: int, rec: dict) -> None:
             if st.button("확인하고 재검토", key=f"pick-go-{idx}"):
                 confirm_product(idx, None if pick == keep else pick)
         else:
+            # 자료가 없다는 것과 주장이 거짓이라는 것은 다르다 — 기획서의 핵심 원칙이라
+            # 빨간 경고 대신 '요청' 프레이밍을 유지한다.
             st.error("판정을 내리지 않고 입점사에 필요한 자료를 요청합니다. "
                      "자료 부재는 거짓이나 위반이 아닙니다.", icon="📄")
             st.markdown("**입점사에 요청할 자료**")
-            # 담당자가 입점사에 하나씩 요청하고 지워가는 단위라 체크리스트로 둔다.
-            # 체크 표시는 담당자 메모일 뿐이며 판정에는 영향을 주지 않는다.
-            for n, m in enumerate(req["missing_evidence"]):
-                st.checkbox(m, key=f"req-{idx}-{n}-{len(rec['history'])}")
-            st.caption(req["notice"] + " 체크는 담당자 메모이며 판정에는 반영되지 않습니다.")
+            messages = evidence_request_messages(req.get("missing_evidence", []))
+            if messages:
+                for msg in messages:
+                    st.warning(msg, icon="📎")
+            else:
+                st.warning(
+                    "이 Claim을 직접 확인할 수 있는 근거를 찾지 못했습니다. "
+                    "해당 사실을 확인할 수 있는 PDF 또는 TXT 증빙을 요청하세요.",
+                    icon="📎",
+                )
+            if req.get("notice"):
+                st.caption(req["notice"])
             with st.expander("자료 제출하고 재검토", expanded=True):
                 new_ev = evidence_form(f"fix{idx}", [claim["product_id"]])
                 if new_ev:
@@ -993,6 +1179,8 @@ def revise(idx: int, new_text: str) -> None:
 
 def screen_review() -> None:
     st.subheader("3. 검토 Report")
+    render_claim_extraction_process(ss.extraction)
+    st.write("")
     counts = pd.Series([status_of(r) for r in ss.results]).value_counts()
     cols = st.columns(4)
     for col, key in zip(cols, ["SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED", "INSUFFICIENT"]):
