@@ -272,13 +272,10 @@ def _first_text(record: dict, keys: tuple[str, ...]) -> str:
     return ""
 
 
-# claim_type_master는 Claim 유형마다 '무엇으로 확인하는지'를 이미 적어 두고 있다.
-# Policy 기준이 비었을 때 '없다'고만 하면 결함처럼 보이므로, 실제 확인 경로를 보여준다.
-COVERAGE_NOTE = {
-    "연결": "이 유형은 등록된 기준에 연결되어 있습니다.",
-    "부분": "일부 제품군에만 기준이 연결되어 있습니다.",
-    "미연결": "이 유형에 대응하는 수치 기준이 환경표지 고시에 아직 없습니다.",
-}
+# claim_type_master는 Claim 유형마다 '무엇으로 어떻게 확인하는지'를 note까지 달아
+# 적어 두고 있다. Policy 기준이 비었을 때 '없다'고만 하면 결함처럼 보이므로,
+# 그 표에 적힌 설계 의도를 그대로 보여준다. 해석을 새로 만들지 않는다
+# (예: 환경표지의 '연결'은 인증 기록과의 연결이지 Policy criterion 연결이 아니다).
 
 
 def claim_type_route(claim_type: str) -> dict:
@@ -1048,20 +1045,25 @@ def render_claim(idx: int, rec: dict) -> None:
             else:
                 route = claim_type_route(claim.get("claim_type", ""))
                 way = str(route.get("verification_route", "")).strip()
-                cover = str(route.get("current_policy_coverage", "")).strip()
+                target = str(route.get("recommended_evidence", "")).strip()
+                note = str(route.get("note", "")).strip()
                 if way:
-                    st.info(f"이 Claim은 **{way}** 방식으로 확인합니다. "
-                            "수치 기준과 대조하는 유형이 아니라 Policy 기준이 비어 있는 것이며, "
-                            "판정이 근거 없이 내려진 것은 아닙니다.", icon="🧭")
-                    if cover:
-                        st.caption(f"기준 연결 상태 — {cover}. "
-                                   + COVERAGE_NOTE.get(cover, ""))
+                    st.info("이 Claim 유형은 Policy 기준값과 대조하지 않습니다. "
+                            "표가 비어 있는 것은 판정에 근거가 없다는 뜻이 아닙니다.",
+                            icon="🧭")
+                    st.markdown(f"- **확인 방식** — {way}")
+                    if target:
+                        st.markdown(f"- **대조 대상** — {target}")
+                    if note:
+                        # claim_type_master의 설계 메모를 그대로 옮긴다
+                        st.caption(f"설계 메모 — {note}")
                     st.caption("실제로 무엇과 대조했는지는 ‘확인한 자료’ 탭에서 볼 수 있습니다.")
                 else:
                     st.caption("이 Claim에 연결된 Policy 기준이 없습니다.")
-                if not gl.policy_retriever:
-                    st.caption("Policy RAG가 꺼져 있어 고시 원문 검색은 시도하지 않았습니다 "
-                               "(현재는 등록된 기준표만 직접 조회합니다).")
+                # Policy RAG 안내는 그 경로를 쓰는 유형에만 의미가 있다
+                if "RAG" in way and not gl.policy_retriever:
+                    st.caption("이 유형은 Policy RAG로 고시 원문을 찾도록 설계돼 있으나, "
+                               "현재 RAG가 꺼져 있어 기준표만 직접 조회했습니다.")
         with tabs[1]:
             evs = report.get("evidence", [])
             if evs:
