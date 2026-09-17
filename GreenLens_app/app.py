@@ -25,49 +25,95 @@ st.set_page_config(page_title="GreenLens", page_icon="🌿", layout="wide")
 
 
 def apply_b2b_style() -> None:
-    """공공 B2B 검토 도구에 맞춘 절제된 시각 체계."""
+    """GreenLens 디자인 시스템 토큰을 Streamlit에 적용한다.
+
+    값은 디자인 시스템 아티팩트의 project/tokens.json에서 그대로 가져왔다.
+    토스 디자인 시스템(TDS)의 Blue/Grey 스케일을 참고한 중립색·브랜드색에,
+    GreenLens 고유의 판정 상태색(초록 회피)을 얹은 구성이다.
+    """
     st.markdown("""
     <style>
       :root {
-        --gl-navy: #17324d;
-        --gl-blue: #176b87;
-        --gl-blue-soft: #eaf3f6;
+        /* 표면 · 텍스트 (TDS Grey) */
         --gl-surface: #ffffff;
-        --gl-bg: #f5f7fa;
-        --gl-line: #d9e1e8;
-        --gl-muted: #5d6b7a;
+        --gl-surface-sunken: #f9fafb;
+        --gl-surface-alt: #f2f4f6;
+        --gl-border: #e5e8eb;
+        --gl-border-strong: #d1d6db;
+        --gl-ink: #191f28;
+        --gl-ink-muted: #4e5968;
+        /* 브랜드 (TDS Blue) — brand는 포커스·아이콘·큰 강조 텍스트 전용.
+           흰 글자를 얹는 버튼 배경은 대비 때문에 brand-strong을 쓴다. */
+        --gl-brand: #3182f6;
+        --gl-brand-strong: #1b64da;
+        --gl-brand-hover: #1957c2;
+        --gl-brand-soft: #e8f3ff;
+        /* 형태 */
+        --gl-radius-sm: 12px;
+        --gl-radius-md: 16px;
+        --gl-radius-lg: 24px;
+        /* 큰 표면은 테두리 대신 그림자로 배경에서 띄운다 */
+        --gl-shadow-card: 0 1px 2px rgba(25,31,40,.04), 0 8px 24px rgba(25,31,40,.06);
+        --gl-shadow-raised: 0 1px 2px rgba(25,31,40,.06);
       }
-      .stApp { background: var(--gl-bg); color: var(--gl-navy); }
-      [data-testid="stHeader"] { background: rgba(245,247,250,.92); }
-      [data-testid="stSidebar"] { background: #f8fafc; border-right: 1px solid var(--gl-line); }
-      [data-testid="stSidebar"] > div:first-child { padding: 1.5rem 1rem; }
-      .block-container { max-width: 1180px; padding-top: 2.2rem; padding-bottom: 3rem; }
-      h1, h2, h3 { color: var(--gl-navy) !important; letter-spacing: -0.025em; }
+      .stApp { background: var(--gl-surface-sunken); color: var(--gl-ink); }
+      [data-testid="stHeader"] { background: rgba(249,250,251,.92); }
+      [data-testid="stSidebar"] { background: var(--gl-surface-alt); border-right: none; }
+      [data-testid="stSidebar"] > div:first-child { padding: 24px 16px; }
+      .block-container { max-width: 1180px; padding-top: 40px; padding-bottom: 48px; }
+
+      h1, h2, h3 { color: var(--gl-ink) !important; letter-spacing: -0.025em; }
       h1 { font-weight: 700 !important; }
       h3 { font-weight: 650 !important; }
-      [data-testid="stCaptionContainer"] { color: var(--gl-muted); }
+      [data-testid="stCaptionContainer"] { color: var(--gl-ink-muted); }
+
+      /* 가장 바깥 카드 — radius-lg + shadow-card */
       [data-testid="stVerticalBlockBorderWrapper"] {
-        background: var(--gl-surface); border: 1px solid var(--gl-line);
-        border-radius: 10px; box-shadow: none;
+        background: var(--gl-surface); border: none;
+        border-radius: var(--gl-radius-lg); box-shadow: var(--gl-shadow-card);
       }
-      [data-testid="stAlert"] { border-radius: 8px; border: 1px solid var(--gl-line); }
-      [data-testid="stMetric"] { background: var(--gl-surface); border: 1px solid var(--gl-line); border-radius: 8px; padding: .8rem 1rem; }
-      [data-testid="stMetricLabel"] { color: var(--gl-muted); font-size: .8rem; }
-      [data-testid="stMetricValue"] { color: var(--gl-navy); }
-      .stButton > button { border-radius: 6px; border-color: #bfcbd5; color: var(--gl-navy); background: #fff; font-weight: 600; }
-      .stButton > button[kind="primary"] { background: var(--gl-blue); border-color: var(--gl-blue); color: #fff; }
-      .stButton > button:hover { border-color: var(--gl-blue); color: var(--gl-blue); }
-      .stButton > button[kind="primary"]:hover { background: #10566f; color: #fff; }
+      /* 한 단계 낮은 표면 — radius-md + shadow-raised */
+      [data-testid="stAlert"] {
+        border-radius: var(--gl-radius-md); border: none; box-shadow: var(--gl-shadow-raised);
+      }
+      [data-testid="stMetric"] {
+        background: var(--gl-surface); border: none; border-radius: var(--gl-radius-md);
+        box-shadow: var(--gl-shadow-raised); padding: 16px;
+      }
+      [data-testid="stMetricLabel"] { color: var(--gl-ink-muted); font-size: 13px; }
+      [data-testid="stMetricValue"] { color: var(--gl-ink); }
+      [data-testid="stExpander"] {
+        background: var(--gl-surface); border: none;
+        border-radius: var(--gl-radius-md); box-shadow: var(--gl-shadow-raised);
+      }
+
+      /* 버튼 · 입력요소 — radius-sm */
+      .stButton > button {
+        border-radius: var(--gl-radius-sm); border-color: var(--gl-border-strong);
+        color: var(--gl-ink); background: var(--gl-surface); font-weight: 600;
+      }
+      .stButton > button:hover {
+        border-color: var(--gl-brand-strong); color: var(--gl-brand-strong);
+        background: var(--gl-brand-soft);
+      }
+      .stButton > button[kind="primary"] {
+        background: var(--gl-brand-strong); border-color: var(--gl-brand-strong); color: #fff;
+      }
+      .stButton > button[kind="primary"]:hover {
+        background: var(--gl-brand-hover); border-color: var(--gl-brand-hover); color: #fff;
+      }
       [data-baseweb="select"] > div, .stTextArea textarea, .stTextInput input {
-        background: #fff !important; border-color: #c8d2dc !important; border-radius: 6px !important;
+        background: var(--gl-surface) !important; border-color: var(--gl-border-strong) !important;
+        border-radius: var(--gl-radius-sm) !important;
       }
       [data-baseweb="select"] > div:focus-within, .stTextArea textarea:focus, .stTextInput input:focus {
-        border-color: var(--gl-blue) !important; box-shadow: 0 0 0 1px var(--gl-blue) !important;
+        border-color: var(--gl-brand) !important; box-shadow: 0 0 0 2px var(--gl-brand-soft) !important;
       }
-      [data-testid="stExpander"] { background: #fff; border: 1px solid var(--gl-line); border-radius: 8px; }
-      hr { border-color: var(--gl-line) !important; }
+      [data-testid="stRadio"] [role="radiogroup"] { gap: 16px; }
+
+      hr { border-color: var(--gl-border) !important; }
       @media (max-width: 900px) {
-        .block-container { padding: 1.25rem 1rem 2rem; }
+        .block-container { padding: 20px 16px 32px; }
       }
     </style>
     """, unsafe_allow_html=True)
@@ -150,16 +196,16 @@ if "_pending" in ss:
 # 표시 도우미
 # ─────────────────────────────────────────────
 def pill(text: str, fg: str, bg: str) -> str:
-    return (f"<span style='background:{bg};color:{fg};border:1px solid {fg}33;"
-            f"border-radius:6px;padding:2px 9px;font-size:0.82rem;font-weight:600;"
-            f"white-space:nowrap'>{html.escape(text)}</span>")
+    return (f"<span style='background:{bg};color:{fg};border:1px solid {fg}22;"
+            f"border-radius:999px;padding:3px 11px;font-size:13px;line-height:1;"
+            f"font-weight:600;white-space:nowrap'>{html.escape(text)}</span>")
 
 
 def highlight(ad_text: str, span: list[int]) -> str:
     s, e = span
     s, e = max(0, s), min(len(ad_text), e)
     return (html.escape(ad_text[:s])
-            + "<mark style='background:#fde68a;color:#111827;padding:1px 2px'>"
+            + "<mark style='background:#fde68a;color:#191f28;padding:1px 3px;border-radius:3px'>"
             + html.escape(ad_text[s:e]) + "</mark>"
             + html.escape(ad_text[e:]))
 
@@ -221,14 +267,14 @@ def render_comparison(rows: list[tuple[str, str, str, str]]) -> None:
         fg, bg = tone.get(sign, tone["?"])
         st.markdown(
             "<div style='display:flex;align-items:center;gap:12px;background:#f9fafb;"
-            "color:#111827;border-radius:8px;padding:10px 14px;margin-bottom:6px'>"
+            "color:#191f28;border-radius:12px;padding:12px 14px;margin-bottom:6px'>"
             "<div style='flex:1;min-width:0'>"
-            f"<div style='font-size:0.72rem;color:#6b7280'>광고 주장 · {html.escape(label)}</div>"
+            f"<div style='font-size:0.72rem;color:#4e5968'>광고 주장 · {html.escape(label)}</div>"
             f"<div style='font-size:0.98rem;font-weight:600'>{html.escape(str(left))}</div></div>"
             f"<div style='flex:0 0 auto;font-size:1.1rem;font-weight:700;color:{fg};"
-            f"background:{bg};border-radius:6px;padding:1px 10px'>{sign}</div>"
+            f"background:{bg};border-radius:999px;padding:2px 11px'>{sign}</div>"
             "<div style='flex:1;min-width:0'>"
-            "<div style='font-size:0.72rem;color:#6b7280'>대조한 자료</div>"
+            "<div style='font-size:0.72rem;color:#4e5968'>대조한 자료</div>"
             f"<div style='font-size:0.98rem;font-weight:600'>{html.escape(str(right))}</div></div>"
             "</div>",
             unsafe_allow_html=True,
@@ -342,7 +388,7 @@ if ss.mode == "단건 검토":
         done = i <= cur_step
         col.markdown(
             f"<div style='text-align:center;padding:6px 2px;border-top:3px solid "
-            f"{'#2563eb' if done else '#9ca3af55'};color:{'inherit' if done else '#9ca3af'};"
+            f"{'#3182f6' if done else '#e5e8eb'};color:{'var(--gl-ink)' if done else 'var(--gl-ink-muted)'};"
             f"font-size:0.85rem;font-weight:{600 if done else 400}'>{name}</div>",
             unsafe_allow_html=True,
         )
@@ -665,7 +711,7 @@ def render_claim(idx: int, rec: dict) -> None:
     temp = claim["product_id"] in gl.SESSION_PRODUCTS
     st.markdown(
         f"#### {claim['claim_id']} · {claim.get('product_name','')} "
-        f"<span style='color:#6b7280;font-size:0.8rem'>({claim['product_id']})</span>"
+        f"<span style='color:#4e5968;font-size:0.8rem'>({claim['product_id']})</span>"
         + (" " + pill("임시 제품 · Company DB 미등록", "#7c2d12", "#fff7ed") if temp else ""),
         unsafe_allow_html=True,
     )
@@ -673,7 +719,7 @@ def render_claim(idx: int, rec: dict) -> None:
     revised = claim.get("revised")
     body_html = html.escape(claim["claim_text"]) if revised else highlight(ss.ad_text, claim["span"])
     st.markdown(
-        "<div style='background:#f9fafb;color:#111827;border-left:3px solid #d1d5db;"
+        "<div style='background:#f9fafb;color:#191f28;border-left:3px solid #e5e8eb;"
         f"padding:8px 12px;font-size:0.92rem'>{body_html}</div>",
         unsafe_allow_html=True,
     )
@@ -684,7 +730,7 @@ def render_claim(idx: int, rec: dict) -> None:
     # 검토 결과와 담당자 확인 상태를 분리 표시 (기획서 F-5)
     st.markdown(
         "검토 결과 " + pill(label_of(rec), fg, bg)
-        + " &nbsp;&nbsp; 확인 상태 " + pill(review_state_of(rec), "#374151", "#f3f4f6"),
+        + " &nbsp;&nbsp; 확인 상태 " + pill(review_state_of(rec), "#4e5968", "#f2f4f6"),
         unsafe_allow_html=True,
     )
     st.caption(STATUS_NOTE[status])
@@ -940,7 +986,7 @@ def screen_final() -> None:
                 st.caption(claim["claim_text"])
                 st.markdown(
                     "검토 결과 " + pill(label_of(rec), fg, bg)
-                    + " &nbsp; 확인 상태 " + pill(review_state_of(rec), "#374151", "#f3f4f6"),
+                    + " &nbsp; 확인 상태 " + pill(review_state_of(rec), "#4e5968", "#f2f4f6"),
                     unsafe_allow_html=True,
                 )
                 body = rec["state"]["request"] if rec["state"]["needs_human"] else rec["state"]["report"]
@@ -1083,10 +1129,10 @@ def screen_batch() -> None:
             with left:
                 st.markdown(
                     f"**{row['product_name']}** "
-                    f"<span style='color:#6b7280;font-size:0.8rem'>{row['company_name']}</span> "
+                    f"<span style='color:#4e5968;font-size:0.8rem'>{row['company_name']}</span> "
                     + pill(row["label"], fg, bg)
                     + ("" if row["review_state"] != "담당자 필수 확인"
-                       else " " + pill("필수 확인", "#374151", "#f3f4f6")),
+                       else " " + pill("필수 확인", "#4e5968", "#f2f4f6")),
                     unsafe_allow_html=True)
                 st.caption(f"“{row['primary_claim_text']}”")
                 st.caption(row["reason"])
