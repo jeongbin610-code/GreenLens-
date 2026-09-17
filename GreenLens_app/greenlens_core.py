@@ -1215,6 +1215,20 @@ def _policy_ref_from_document(doc, attempt: int) -> dict:
     }
 
 
+def _policy_search(query: str, attempt: int) -> list[dict]:
+    """벡터 검색은 외부 호출이다. 실패해도 검토 전체가 죽어서는 안 된다.
+
+    쿼터 초과·네트워크 오류·인덱스 손상은 '기준을 못 찾은 것'과 같게 취급한다.
+    Policy는 보조 경로이고, 판정은 규칙과 Company DB로 이미 내려진다.
+    """
+    try:
+        return [_policy_ref_from_document(d, attempt)
+                for d in policy_retriever.invoke(query)]
+    except Exception as exc:
+        print("Policy 검색 실패(무시하고 계속):", type(exc).__name__, exc)
+        return []
+
+
 def _structured_policy_refs(found: list[dict], attempt: int) -> list[dict]:
     return [{"criterion_id": c["criterion_id"], "item": c["시험항목"], "doc": c["기준문서명"],
              "page": c["참고페이지_조항"], "trust": c["policy_trust_level"], "attempt": attempt}
@@ -1238,17 +1252,14 @@ def retrieve_policy_candidates(claim: dict, product: dict | None = None, attempt
         if found:
             return _structured_policy_refs(found, attempt)
         if policy_retriever is not None and claim.get("claim_text"):
-            return [_policy_ref_from_document(d, attempt)
-                    for d in policy_retriever.invoke(claim["claim_text"])]
+            return _policy_search(claim["claim_text"], attempt)
     else:
         el_code = str(product.get("EL_code", "") if product else "")
         found = _criteria_by_token_overlap(str(claim.get("claim_text", "")), el_code)
         if found:
             return _structured_policy_refs(found, attempt)
         if policy_retriever is not None:
-            query = reformulate_policy_query(claim, product)
-            return [_policy_ref_from_document(d, attempt)
-                    for d in policy_retriever.invoke(query)]
+            return _policy_search(reformulate_policy_query(claim, product), attempt)
 
     return _structured_policy_refs(found, attempt)
 
