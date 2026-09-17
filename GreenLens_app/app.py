@@ -319,16 +319,29 @@ with st.sidebar:
 STAGE_INDEX = {"input": 0, "review": 2, "final": 4}
 st.title("환경성 광고 사전점검")
 st.caption("광고 Claim과 등록·제출 증빙을 대조해 확인 범위와 필요한 다음 조치를 안내합니다.")
-cur_step = STAGE_INDEX[ss.stage]
-cols = st.columns(len(STEPS))
-for i, (col, name) in enumerate(zip(cols, STEPS)):
-    done = i <= cur_step
-    col.markdown(
-        f"<div style='text-align:center;padding:6px 2px;border-top:3px solid "
-        f"{'#2563eb' if done else '#9ca3af55'};color:{'inherit' if done else '#9ca3af'};"
-        f"font-size:0.85rem;font-weight:{600 if done else 400}'>{name}</div>",
-        unsafe_allow_html=True,
-    )
+
+# 같은 엔진을 두 사용자가 쓴다. 기업은 게시 전 한 건을 점검하고,
+# 감독기관은 등록된 문구를 한 번에 훑어 우선 검토 대상을 좁힌다.
+ss.mode = st.radio(
+    "사용 방식",
+    ["단건 검토", "일괄 스크리닝"],
+    index=["단건 검토", "일괄 스크리닝"].index(ss.get("mode", "단건 검토")),
+    horizontal=True, label_visibility="collapsed",
+    captions=["기업 담당자 — 게시 전 광고 문구 한 건을 점검",
+              "감독기관 — 등록된 문구를 한 번에 훑어 우선 검토 대상 선별"],
+)
+
+if ss.mode == "단건 검토":
+    cur_step = STAGE_INDEX[ss.stage]
+    cols = st.columns(len(STEPS))
+    for i, (col, name) in enumerate(zip(cols, STEPS)):
+        done = i <= cur_step
+        col.markdown(
+            f"<div style='text-align:center;padding:6px 2px;border-top:3px solid "
+            f"{'#2563eb' if done else '#9ca3af55'};color:{'inherit' if done else '#9ca3af'};"
+            f"font-size:0.85rem;font-weight:{600 if done else 400}'>{name}</div>",
+            unsafe_allow_html=True,
+        )
 st.write("")
 
 # ─────────────────────────────────────────────
@@ -994,4 +1007,97 @@ def screen_final() -> None:
 
 
 # ─────────────────────────────────────────────
-{"input": screen_input, "review": screen_review, "final": screen_final}[ss.stage]()
+# 일괄 스크리닝 — 감독기관용 1차 필터링
+# 판정 엔진은 단건 검토와 완전히 같다. 훑는 범위만 다르다.
+# ─────────────────────────────────────────────
+SEVERITY = {"CONTRADICTED": 0, "INSUFFICIENT": 1, "PARTIALLY_SUPPORTED": 2, "SUPPORTED": 3}
+
+
+def run_screening(rows: list[dict]) -> list[dict]:
+    out = []
+    bar = st.progress(0.0, text="스크리닝 중")
+    for i, row in enumerate(rows, 1):
+        ex = gl.extract_claims(row["primary_claim_text"], [row["product_id"]], use_llm=False)
+        if ex["claims"]:
+            claim = ex["claims"][0]
+            session = [e for e in gl.SESSION_EVIDENCE_POOL.values()
+                       if e["product_id"] == row["product_id"]]
+            res = gl.assess(claim, session)
+        else:
+            claim = {}
+            res = {"status": "INSUFFICIENT", "label": gl.STATUS_LABELS["INSUFFICIENT"],
+                   "rationale": ["검증 가능한 환경성 주장을 찾지 못함"],
+                   "review_state": "담당자 필수 확인"}
+        out.append({**row, "status": res["status"], "label": res["label"],
+                    "review_state": res["review_state"],
+                    "reason": " / ".join(str(x) for x in res["rationale"])})
+        bar.progress(i / len(rows), text=f"스크리닝 중 {i}/{len(rows)}")
+    bar.empty()
+    return sorted(out, key=lambda r: SEVERITY[r["status"]])
+
+
+def screen_batch() -> None:
+    st.subheader("일괄 스크리닝")
+    st.caption("등록된 광고 문구를 한 번에 훑어 우선 검토 대상을 좁힙니다. "
+               "판정 기준은 단건 검토와 동일하며, 여기서도 AI가 위반을 단정하지 않습니다.")
+
+    catalog = gl.demo_catalog.fillna("")
+    companies = ["전체"] + sorted(catalog["company_name"].unique())
+    with st.container(border=True):
+        pick = st.selectbox("대상 기업", companies)
+        target = catalog if pick == "전체" else catalog[catalog["company_name"] == pick]
+        st.caption(f"검토 대상 광고 문구 {len(target)}건")
+        if st.button("스크리닝 실행", type="primary", width="stretch"):
+            ss.screening = run_screening(target.to_dict("records"))
+            st.rerun()
+
+    results = ss.get("screening")
+    if not results:
+        return
+
+    flagged = [r for r in results if r["status"] != "SUPPORTED"]
+    must = [r for r in results if r["review_state"] == "담당자 필수 확인"]
+    st.write("")
+    cols = st.columns(4)
+    cols[0].metric("검토한 문구", len(results))
+    cols[1].metric("우선 검토 대상", len(flagged),
+                   delta=f"{len(flagged) / len(results) * 100:.0f}%", delta_color="off")
+    cols[2].metric("담당자 필수 확인", len(must))
+    cols[3].metric("근거 확인", len(results) - len(flagged))
+
+    st.caption(f"전체 {len(results)}건 중 {len(flagged)}건으로 좁혔습니다. "
+               "나머지는 등록된 자료와 일치하지만, 법적 적합성을 보증하지는 않습니다.")
+    st.divider()
+
+    for n, row in enumerate(results):
+        if row["status"] == "SUPPORTED":
+            continue
+        fg, bg = STATUS_STYLE[row["status"]]
+        with st.container(border=True):
+            left, right = st.columns([5, 1])
+            with left:
+                st.markdown(
+                    f"**{row['product_name']}** "
+                    f"<span style='color:#6b7280;font-size:0.8rem'>{row['company_name']}</span> "
+                    + pill(row["label"], fg, bg)
+                    + ("" if row["review_state"] != "담당자 필수 확인"
+                       else " " + pill("필수 확인", "#374151", "#f3f4f6")),
+                    unsafe_allow_html=True)
+                st.caption(f"“{row['primary_claim_text']}”")
+                st.caption(row["reason"])
+            if right.button("상세 검토", key=f"drill-{n}", width="stretch"):
+                ss["_pending"] = {"product_ids": [row["product_id"]],
+                                  "ad_text": row["primary_claim_text"]}
+                ss.mode = "단건 검토"
+                ss.stage = "input"
+                st.rerun()
+
+    st.caption("‘상세 검토’를 누르면 해당 문구가 단건 검토로 넘어가며, "
+               "근거·판단 기준·필요한 보완 자료를 건별로 확인할 수 있습니다.")
+
+
+# ─────────────────────────────────────────────
+if ss.mode == "일괄 스크리닝":
+    screen_batch()
+else:
+    {"input": screen_input, "review": screen_review, "final": screen_final}[ss.stage]()
