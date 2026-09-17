@@ -18,6 +18,7 @@ import os
 import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -25,19 +26,46 @@ import streamlit as st
 st.set_page_config(page_title="GreenLens", page_icon="🌿", layout="wide")
 
 # ─────────────────────────────────────────────
-# API 키 연결 (선택)
-#  greenlens_core는 os.environ만 본다. Streamlit은 .streamlit/secrets.toml을 쓰므로
-#  core를 import 하기 전에 환경변수로 옮겨 준다. 시스템 환경변수를 이미 잡아 뒀다면
-#  그쪽이 우선이고, 아무것도 없으면 규칙 전용으로 동작한다.
-#  secrets.toml은 .gitignore에 들어 있다 — 키는 저장소에 올라가지 않는다.
+# 비밀값 연결 (선택)
+#  greenlens_core와 boto3는 os.environ만 본다. Streamlit은 secrets.toml을 쓰므로
+#  core를 import 하기 전에 환경변수로 옮겨 준다.
+#  우선순위: 이미 잡힌 시스템 환경변수 > secrets.toml > 없음(규칙 전용).
+#  st.secrets는 실행 위치(cwd)에 따라 파일을 못 찾을 수 있어, app.py 옆의
+#  .streamlit/secrets.toml도 직접 읽는다.
+#  secrets.toml은 .gitignore로 막혀 있다 — 키는 저장소에 올라가지 않는다.
 # ─────────────────────────────────────────────
-for _k in ("OPENAI_API_KEY", "OPENAI_MODEL", "GREENLENS_USE_LLM"):
-    if not os.environ.get(_k):
+_SECRET_KEYS = (
+    "OPENAI_API_KEY", "OPENAI_MODEL", "GREENLENS_USE_LLM",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+    "AWS_DEFAULT_REGION", "AWS_REGION",
+    "GREENLENS_POLICY_BUCKET", "GREENLENS_POLICY_PREFIX",
+    "GREENLENS_POLICY_EMBEDDING_MODEL", "GREENLENS_POLICY_K",
+)
+
+
+def _load_secrets() -> dict:
+    """st.secrets를 먼저 보고, 없으면 app.py 옆 파일을 직접 읽는다."""
+    found = {}
+    try:
+        found.update({k: st.secrets[k] for k in _SECRET_KEYS if k in st.secrets})
+    except Exception:          # secrets.toml이 없거나 파싱 실패
+        pass
+    if len(found) < len(_SECRET_KEYS):
         try:
-            if _k in st.secrets:
-                os.environ[_k] = str(st.secrets[_k])
-        except Exception:      # secrets.toml이 없으면 조용히 넘어간다
+            import tomllib
+            path = Path(__file__).resolve().parent / ".streamlit" / "secrets.toml"
+            if path.is_file():
+                data = tomllib.loads(path.read_text(encoding="utf-8"))
+                for k in _SECRET_KEYS:
+                    found.setdefault(k, data.get(k))
+        except Exception:
             pass
+    return found
+
+
+for _k, _v in _load_secrets().items():
+    if _v is not None and str(_v).strip() and not os.environ.get(_k):
+        os.environ[_k] = str(_v).strip()
 
 
 def apply_b2b_style() -> None:

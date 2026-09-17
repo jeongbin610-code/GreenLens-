@@ -13,5 +13,12 @@ venv/
 # Excel 임시 잠금 파일
 ~$*.xlsx
 
-# Streamlit 비밀값 (API 키 등) — 절대 커밋 금지
-.streamlit/secrets.toml
+# 비밀값 — 절대 커밋 금지
+# '.streamlit/secrets.toml'처럼 슬래시가 든 패턴은 저장소 루트에만 걸린다.
+# GreenLens_app/.streamlit/ 아래도 막으려면 ** 가 필요하다.
+**/.streamlit/secrets.toml
+**/secrets.toml
+.env
+.env.*
+*.pem
+credentials
