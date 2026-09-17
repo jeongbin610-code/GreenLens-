@@ -770,12 +770,32 @@ def render_claim(idx: int, rec: dict) -> None:
         with tabs[0]:
             refs = report.get("policy_refs", [])
             if refs:
-                st.dataframe(
-                    pd.DataFrame(refs).rename(columns={
-                        "criterion_id": "기준 ID", "item": "시험항목", "doc": "기준 문서",
-                        "page": "참고 조항", "trust": "신뢰등급"}),
-                    hide_index=True, width="stretch")
-                st.caption("신뢰등급이 VERIFIED가 아닌 기준은 단독 판정 근거로 쓰지 않습니다.")
+                # criteria_master에는 기준값·시행일·버전·출처 URL까지 들어 있다.
+                # 어느 문서 몇 페이지의 어떤 수치와 대조했는지 추적할 수 있도록 전부 보여준다.
+                enriched = []
+                for r in refs:
+                    c = gl.get_criterion(r.get("criterion_id", "")) or {}
+                    enriched.append({
+                        "기준 ID": r.get("criterion_id", ""),
+                        "시험항목": r.get("item", ""),
+                        "기준값": f"{c.get('기준연산자','')} {c.get('기준값','')} "
+                                  f"{c.get('단위','')}".strip(),
+                        "기준 문서": r.get("doc", ""),
+                        "참고 조항": r.get("page", ""),
+                        "버전": c.get("기준버전", ""),
+                        "시행일": c.get("시행일", ""),
+                        "신뢰등급": r.get("trust", ""),
+                    })
+                st.dataframe(pd.DataFrame(enriched), hide_index=True, width="stretch")
+                for r in refs:
+                    c = gl.get_criterion(r.get("criterion_id", "")) or {}
+                    url = str(c.get("기준출처URL", "")).strip()
+                    if url.startswith("http"):
+                        st.caption(f"{r.get('criterion_id','')} 원문 출처 · [{c.get('기준문서명','')}]({url})")
+                    if str(c.get("기준검증상태", "")).strip():
+                        st.caption(f"　검증 상태 — {c['기준검증상태']}")
+                st.caption("신뢰등급이 VERIFIED가 아닌 기준은 단독 판정 근거로 쓰지 않습니다. "
+                           "표의 값은 기준표에서 옮긴 것이며, 고시 원문 전문을 색인하지는 않습니다.")
             else:
                 st.caption("이 Claim에 연결된 Policy 기준이 없습니다.")
         with tabs[1]:
