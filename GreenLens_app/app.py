@@ -475,7 +475,10 @@ with st.sidebar:
         f"- LLM 보조: {'사용' if gl.USE_LLM else '미사용'}",
         "- 증빙 구조화: 규칙 파서"
         + ("+LLM(원문 대조 게이트 통과분만)" if gl.USE_LLM else " 전용"),
-        f"- Policy RAG: {'사용' if gl.policy_retriever else '미사용(기준 직접 조회)'}",
+        "- Policy RAG: " + (
+            f"S3 고시 원문 색인 {getattr(gl, 'policy_rag_info', None) and gl.policy_rag_info['vector_count']:,}개 chunk"
+            if gl.policy_retriever and getattr(gl, "policy_rag_info", None)
+            else "사용" if gl.policy_retriever else "미사용(기준 직접 조회)"),
     ]
     st.caption(("  " + chr(10)).join(lines))
 

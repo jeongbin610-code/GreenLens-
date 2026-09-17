@@ -633,6 +633,7 @@ import unicodedata
 explain_llm = None
 scope_judge = None
 policy_retriever = None
+policy_rag_info = None       # S3 인덱스 로드 성공 시 버킷·벡터 수가 담긴다
 _llm_parse_evidence = None       # LLM 원본 추출기 (게이트 전)
 
 EV_NUM = r"(\d+(?:\.\d+)?)"
@@ -732,10 +733,17 @@ def parse_evidence_text(text: str, product_id: str) -> dict:
             "origin": "SESSION", "field_sources": sources, "dropped_fields": dropped}
 
 
+# 키가 있어도 패키지가 없으면 규칙 전용으로 내려간다. 앱이 죽어서는 안 된다.
 if USE_LLM:
-    from pydantic import BaseModel, Field
-    from langchain.chat_models import init_chat_model
+    try:
+        from pydantic import BaseModel, Field
+        from langchain.chat_models import init_chat_model
+    except ImportError as exc:
+        USE_LLM = False
+        print("LLM 보조 비활성 — 패키지 없음:", exc,
+              "→ pip install -r requirements.txt")
 
+if USE_LLM:
     MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     llm = init_chat_model(model=MODEL, temperature=0)
 
@@ -772,22 +780,19 @@ if USE_LLM:
         )
         return parsed.model_dump()
 
-    # Policy RAG: criteria_master 행만 색인 (Company DB·평가셋은 색인하지 않음)
+    # Policy RAG: S3에 올려둔 운영 FAISS 인덱스를 로드한다.
+    # 기준표 행이 아니라 고시 원문을 쪼갠 chunk라, 검색 결과에 원문 문장이 딸려 온다.
+    # 자격증명·네트워크가 없으면 비활성으로 두고 구조화 기준 조회로 계속 간다.
     try:
-        from langchain_core.documents import Document
-        from langchain_openai import OpenAIEmbeddings
-        from langchain_community.vectorstores import FAISS
+        from s3_policy_rag import load_s3_policy_retriever
 
-        policy_docs = [
-            Document(
-                page_content=f"{r['제품군']} | {r['시험항목']} | {r['기준연산자']} {r['기준값']} {r['단위']} | {r['근거요약']}",
-                metadata={"criterion_id": r["criterion_id"], "doc": r["기준문서명"], "page": r["참고페이지_조항"],
-                          "trust": r["policy_trust_level"]},
-            )
-            for r in criteria_master.fillna("").to_dict("records")
-        ]
-        policy_retriever = FAISS.from_documents(policy_docs, OpenAIEmbeddings(model="text-embedding-3-small")) \
-            .as_retriever(search_kwargs={"k": 3})
+        policy_retriever, policy_rag_info = load_s3_policy_retriever()
+        print(
+            "S3 Policy RAG 로드:",
+            f"s3://{policy_rag_info['bucket']}/{policy_rag_info['prefix']}",
+            f"| vectors={policy_rag_info['vector_count']}",
+            f"| model={policy_rag_info['embedding_model']}",
+        )
     except Exception as exc:  # RAG가 실패해도 구조화 후보 조회로 계속 진행
         print("Policy RAG 비활성:", exc)
 
@@ -1187,6 +1192,35 @@ def _criteria_by_token_overlap(text: str, el_code: str) -> list[dict]:
     return [row for _, row in sorted(scored, key=lambda x: -x[0])]
 
 
+def _policy_ref_from_document(doc, attempt: int) -> dict:
+    """S3 FAISS Document를 화면·LangGraph가 쓰는 policy_ref로 바꾼다.
+
+    구조화 기준(criteria_master)과 달리 여기엔 고시 원문 조각이 들어 있다.
+    화면의 'Policy 원문'은 이 original_text를 그대로 보여준다.
+    """
+    metadata = dict(getattr(doc, "metadata", {}) or {})
+    original_text = str(getattr(doc, "page_content", "") or "").strip()
+    return {
+        "criterion_id": str(metadata.get("criterion_id", "")),
+        "item": str(metadata.get("claim_type") or metadata.get("policy_scope") or "정책 원문"),
+        "doc": str(metadata.get("document_name") or metadata.get("doc")
+                   or metadata.get("source_id") or "정책 문서"),
+        "page": metadata.get("pdf_page") or metadata.get("page") or "페이지 미기재",
+        "trust": str(metadata.get("trust") or "VERIFIED"),
+        "attempt": attempt,
+        "original_text": original_text,
+        "source_id": str(metadata.get("source_id", "")),
+        "chunk_id": str(metadata.get("chunk_id", "")),
+        "s3_key": str(metadata.get("s3_key", "")),
+    }
+
+
+def _structured_policy_refs(found: list[dict], attempt: int) -> list[dict]:
+    return [{"criterion_id": c["criterion_id"], "item": c["시험항목"], "doc": c["기준문서명"],
+             "page": c["참고페이지_조항"], "trust": c["policy_trust_level"], "attempt": attempt}
+            for c in found]
+
+
 def retrieve_policy_candidates(claim: dict, product: dict | None = None, attempt: int = 1) -> list[dict]:
     """attempt 1 — criterion_id 직접 → claim_type_master 연결 → 벡터 검색(원문 질의)
     attempt 2 — 질의 재구성: 제품 EL 기준 안에서 시험항목 토큰 대조 + 재구성 질의 벡터 검색"""
@@ -1200,20 +1234,23 @@ def retrieve_policy_candidates(claim: dict, product: dict | None = None, attempt
             if len(hit) and not _blank(hit.iloc[0]["related_criterion_ids"]):
                 ids = str(hit.iloc[0]["related_criterion_ids"]).split("|")
         found = [c for c in (get_criterion(i) for i in ids) if c]
-        if not found and policy_retriever is not None and claim.get("claim_text"):
-            found = [c for c in (get_criterion(d.metadata["criterion_id"])
-                                 for d in policy_retriever.invoke(claim["claim_text"])) if c]
+        # 구조화 기준이 잡히면 그걸 쓴다. 벡터 검색은 못 찾았을 때만 부른다.
+        if found:
+            return _structured_policy_refs(found, attempt)
+        if policy_retriever is not None and claim.get("claim_text"):
+            return [_policy_ref_from_document(d, attempt)
+                    for d in policy_retriever.invoke(claim["claim_text"])]
     else:
         el_code = str(product.get("EL_code", "") if product else "")
         found = _criteria_by_token_overlap(str(claim.get("claim_text", "")), el_code)
-        if not found and policy_retriever is not None:
+        if found:
+            return _structured_policy_refs(found, attempt)
+        if policy_retriever is not None:
             query = reformulate_policy_query(claim, product)
-            found = [c for c in (get_criterion(d.metadata["criterion_id"])
-                                 for d in policy_retriever.invoke(query)) if c]
+            return [_policy_ref_from_document(d, attempt)
+                    for d in policy_retriever.invoke(query)]
 
-    return [{"criterion_id": c["criterion_id"], "item": c["시험항목"], "doc": c["기준문서명"],
-             "page": c["참고페이지_조항"], "trust": c["policy_trust_level"], "attempt": attempt}
-            for c in found]
+    return _structured_policy_refs(found, attempt)
 
 
 def diagnose_no_evidence(claim: dict, product: dict | None, assessment: dict,
