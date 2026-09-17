@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """GreenLens — 환경성 광고 사전점검 Copilot (Streamlit MVP)
 
+사용자는 유통사 마케팅·MD 담당자다. 입점사가 써 보낸 상품 상세페이지의
+환경성 문구를, 유통 채널에 올리기 전에 공개 인증내역과 대조한다.
+자기 제품이 아니라 남의 제품 자료를 검증하는 입장이라는 점이 설계의 전제다.
+
 기획서 8-2의 5개 화면을 구현한다.
   1 광고 입력 · 2 분석 진행 · 3 검토 Report · 4 보완 및 재검토 · 5 최종 확인
 
@@ -165,7 +169,7 @@ def source_badge(is_synthetic, source_type: str = "") -> str:
     if str(is_synthetic) == "True" or "합성" in str(source_type):
         return "가상(합성) 자료"
     if "제출" in str(source_type):
-        return "기업 제출 자료"
+        return "입점사 제출 자료"
     return "공식/공개 기록"
 
 
@@ -256,7 +260,7 @@ def review_state_of(rec: dict) -> str:
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### GreenLens")
-    st.caption("환경성 광고 사전점검 시스템")
+    st.caption("유통 채널 환경성 문구 사전점검")
 
     st.info(
         "본 결과는 제공된 자료와 등록된 기준을 바탕으로 한 **사전점검 참고자료**입니다. "
@@ -320,15 +324,15 @@ STAGE_INDEX = {"input": 0, "review": 2, "final": 4}
 st.title("환경성 광고 사전점검")
 st.caption("광고 Claim과 등록·제출 증빙을 대조해 확인 범위와 필요한 다음 조치를 안내합니다.")
 
-# 같은 엔진을 두 사용자가 쓴다. 기업은 게시 전 한 건을 점검하고,
-# 감독기관은 등록된 문구를 한 번에 훑어 우선 검토 대상을 좁힌다.
+# 유통사 담당자의 두 가지 업무 상황이다. 판정 엔진은 완전히 같고 훑는 범위만 다르다.
+# 상품 하나를 올리기 직전에는 단건으로, 입점 상품을 정기 점검할 때는 일괄로 본다.
 ss.mode = st.radio(
     "사용 방식",
     ["단건 검토", "일괄 스크리닝"],
     index=["단건 검토", "일괄 스크리닝"].index(ss.get("mode", "단건 검토")),
     horizontal=True, label_visibility="collapsed",
-    captions=["기업 담당자 — 게시 전 광고 문구 한 건을 점검",
-              "감독기관 — 등록된 문구를 한 번에 훑어 우선 검토 대상 선별"],
+    captions=["상품 등록 전 — 입점사가 보낸 상세페이지 문구 한 건을 점검",
+              "정기 점검 — 입점 상품 문구를 한 번에 훑어 우선 검토 대상 선별"],
 )
 
 if ss.mode == "단건 검토":
@@ -797,10 +801,10 @@ def render_claim(idx: int, rec: dict) -> None:
             if st.button("확인하고 재검토", key=f"pick-go-{idx}"):
                 confirm_product(idx, None if pick == keep else pick)
         else:
-            st.error("판정을 내리지 않고 필요한 자료를 요청합니다. 자료 부재는 거짓이나 위반이 아닙니다.",
-                     icon="📄")
-            st.markdown("**요청한 자료**")
-            # 담당자가 공급업체에 하나씩 요청하고 지워가는 단위라 체크리스트로 둔다.
+            st.error("판정을 내리지 않고 입점사에 필요한 자료를 요청합니다. "
+                     "자료 부재는 거짓이나 위반이 아닙니다.", icon="📄")
+            st.markdown("**입점사에 요청할 자료**")
+            # 담당자가 입점사에 하나씩 요청하고 지워가는 단위라 체크리스트로 둔다.
             # 체크 표시는 담당자 메모일 뿐이며 판정에는 영향을 주지 않는다.
             for n, m in enumerate(req["missing_evidence"]):
                 st.checkbox(m, key=f"req-{idx}-{n}-{len(rec['history'])}")
@@ -1007,8 +1011,9 @@ def screen_final() -> None:
 
 
 # ─────────────────────────────────────────────
-# 일괄 스크리닝 — 감독기관용 1차 필터링
+# 일괄 스크리닝 — 입점 상품 1차 필터링
 # 판정 엔진은 단건 검토와 완전히 같다. 훑는 범위만 다르다.
+# 유통사는 상품 수가 많아 전수 검토가 불가능하므로, 먼저 볼 것을 좁히는 데 목적이 있다.
 # ─────────────────────────────────────────────
 SEVERITY = {"CONTRADICTED": 0, "INSUFFICIENT": 1, "PARTIALLY_SUPPORTED": 2, "SUPPORTED": 3}
 
@@ -1038,15 +1043,15 @@ def run_screening(rows: list[dict]) -> list[dict]:
 
 def screen_batch() -> None:
     st.subheader("일괄 스크리닝")
-    st.caption("등록된 광고 문구를 한 번에 훑어 우선 검토 대상을 좁힙니다. "
+    st.caption("입점 상품의 상세페이지 문구를 한 번에 훑어 먼저 볼 것을 좁힙니다. "
                "판정 기준은 단건 검토와 동일하며, 여기서도 AI가 위반을 단정하지 않습니다.")
 
     catalog = gl.demo_catalog.fillna("")
     companies = ["전체"] + sorted(catalog["company_name"].unique())
     with st.container(border=True):
-        pick = st.selectbox("대상 기업", companies)
+        pick = st.selectbox("입점사", companies)
         target = catalog if pick == "전체" else catalog[catalog["company_name"] == pick]
-        st.caption(f"검토 대상 광고 문구 {len(target)}건")
+        st.caption(f"검토 대상 상품 {len(target)}건")
         if st.button("스크리닝 실행", type="primary", width="stretch"):
             ss.screening = run_screening(target.to_dict("records"))
             st.rerun()
@@ -1059,14 +1064,14 @@ def screen_batch() -> None:
     must = [r for r in results if r["review_state"] == "담당자 필수 확인"]
     st.write("")
     cols = st.columns(4)
-    cols[0].metric("검토한 문구", len(results))
+    cols[0].metric("검토한 상품", len(results))
     cols[1].metric("우선 검토 대상", len(flagged),
                    delta=f"{len(flagged) / len(results) * 100:.0f}%", delta_color="off")
     cols[2].metric("담당자 필수 확인", len(must))
     cols[3].metric("근거 확인", len(results) - len(flagged))
 
     st.caption(f"전체 {len(results)}건 중 {len(flagged)}건으로 좁혔습니다. "
-               "나머지는 등록된 자료와 일치하지만, 법적 적합성을 보증하지는 않습니다.")
+               "나머지는 공개 인증내역과 일치하지만, 법적 적합성을 보증하지는 않습니다.")
     st.divider()
 
     for n, row in enumerate(results):
@@ -1093,7 +1098,7 @@ def screen_batch() -> None:
                 st.rerun()
 
     st.caption("‘상세 검토’를 누르면 해당 문구가 단건 검토로 넘어가며, "
-               "근거·판단 기준·필요한 보완 자료를 건별로 확인할 수 있습니다.")
+               "근거·판단 기준·입점사에 요청할 자료를 건별로 확인할 수 있습니다.")
 
 
 # ─────────────────────────────────────────────
