@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import sys
 import uuid
 from datetime import datetime
@@ -22,6 +23,21 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="GreenLens", page_icon="🌿", layout="wide")
+
+# ─────────────────────────────────────────────
+# API 키 연결 (선택)
+#  greenlens_core는 os.environ만 본다. Streamlit은 .streamlit/secrets.toml을 쓰므로
+#  core를 import 하기 전에 환경변수로 옮겨 준다. 시스템 환경변수를 이미 잡아 뒀다면
+#  그쪽이 우선이고, 아무것도 없으면 규칙 전용으로 동작한다.
+#  secrets.toml은 .gitignore에 들어 있다 — 키는 저장소에 올라가지 않는다.
+# ─────────────────────────────────────────────
+for _k in ("OPENAI_API_KEY", "OPENAI_MODEL", "GREENLENS_USE_LLM"):
+    if not os.environ.get(_k):
+        try:
+            if _k in st.secrets:
+                os.environ[_k] = str(st.secrets[_k])
+        except Exception:      # secrets.toml이 없으면 조용히 넘어간다
+            pass
 
 
 def apply_b2b_style() -> None:
